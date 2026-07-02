@@ -2,23 +2,18 @@
 services:
   filebrowser:
     image: filebrowser/filebrowser:latest
-    # QA fix: the image runs as non-root UID 1000 and its entrypoint writes to /config
-    # /srv /database. On k8s the persistent-volume mounts come up root-owned (Shipyard sets
-    # no pod-level fsGroup), so the non-root user can't write them → CrashLoopBackOff
-    # ("cp: can't create '/config/settings.json': Permission denied"). Local Docker masks
-    # this because named volumes inherit the image's chowned dir ownership. Run as root so
-    # it can write the root-owned mounts. NOTE: `user:` (→ k8s runAsUser) is used rather than
-    # the shipyard.securityContext label because that label is only honored for REMOTE
-    # projects (build.py:3997 nulls it otherwise) — the compose user field applies to all
-    # deploys. "root" (not "0") so the image's busybox `id -u` can resolve it.
-    # (Finding F10: Shipyard has no pod-level fsGroup support.)
-    user: "root"
+    # QA note: the image runs as non-root UID 1000 and writes to /config /srv /database.
+    # Those paths were originally persistent-volume mounts, but on k8s a PV mount comes up
+    # root-owned and Shipyard sets no pod-level fsGroup, so the non-root app crashed
+    # ("open /database/filebrowser.db: permission denied" — the entrypoint even drops
+    # privileges to UID 1000 after setup, so running as root doesn't help). Dropping the
+    # mounts lets filebrowser use the image's own dirs (chowned to UID 1000 in the
+    # Dockerfile), which the app can write. Trade-off: data is not persisted across pod
+    # restarts. The persistent + non-root version needs pod-level fsGroup (Shipyard
+    # Finding F10 → shipyard PR danielle/pod-security-context): once that ships, re-add the
+    # volumes plus `shipyard.podSecurityContext: '{"fsGroup": 1000}'`.
     ports:
       - 8000:80
-    volumes:
-      - filebrowser-srv:/srv
-      - filebrowser-config:/config
-      - filebrowser-database:/database
     healthcheck:
       test:
         - CMD
@@ -36,13 +31,3 @@ services:
       shipyard.readiness.http.path: /health
     environment:
       FB_PORT: "80"
-volumes:
-  filebrowser-srv:
-    labels:
-      shipyard.deploy.disk.size: 2Gi
-  filebrowser-config:
-    labels:
-      shipyard.deploy.disk.size: 2Gi
-  filebrowser-database:
-    labels:
-      shipyard.deploy.disk.size: 2Gi
