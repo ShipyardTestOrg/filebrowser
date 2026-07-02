@@ -23,6 +23,13 @@ services:
       shipyard.route: /
       shipyard.primary-route: "true"
       shipyard.readiness.http.path: /health
+      # QA fix: the image runs as non-root UID 1000 and its entrypoint writes to /config
+      # /srv /database. On k8s the persistent-volume mounts come up root-owned (Shipyard sets
+      # no pod-level fsGroup), so the non-root user can't write them → CrashLoopBackOff
+      # ("cp: can't create '/config/settings.json': Permission denied"). Local Docker masks
+      # this because named volumes inherit the image's chowned dir ownership. Run as root so
+      # it can write the root-owned mounts. (Finding F10: Shipyard has no fsGroup support.)
+      shipyard.securityContext: '{"runAsUser": 0}'
     environment:
       FB_PORT: "80"
 volumes:
